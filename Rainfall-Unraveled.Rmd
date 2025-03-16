@@ -1,0 +1,579 @@
+---
+title: "Predicting the possibility of rain and assessing how the different environmental factors affect the amount of rainfall received in Australia"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Project done by: V.M.KARTHIK SAI
+
+### Setup - Imported Australia Weather Dataset
+
+### Source of Dataset - Kaggle - (https://www.kaggle.com/datasets/jsphyg/weather-dataset-rattle-package)
+
+### Loading the required packages
+```{r}
+rm(list=ls())
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(mice)
+library(caTools)
+library(e1071)
+library(class)
+```
+
+* * *
+
+### About the problem statement:
+
+### I am predicting the possibility of rain and assessing how the different environmental factors affect the amount of rainfall received in Australia.
+
+* * *
+
+### Chosen Dataset - Australian Weather Dataset
+```{r}
+setwd("/Users/karthiksaivm/Documents/Personal Projects")
+waus<-read.csv("weatherAUS.csv")
+set.seed(369)
+```
+
+### Description of Dataset: Australian Weather Dataset - This dataset contains more than 145,000 records of weather data from 2007 and 2017.
+
+### Preparing the Dataset
+```{r}
+#Changing "chr" datatype to "Date.format" for the Date column
+waus<-waus%>%
+  mutate(date=as.Date(Date))
+waus$Date<-NULL
+waus<-waus%>%
+  rename(Date=date)
+
+#Making new columns(Day,Month,Year) from the existing Date column
+waus<-waus%>%
+  mutate(Month=months(Date))
+waus[, "Year"] <- format(waus[,"Date"], "%Y")
+waus$Year<-as.numeric(waus$Year)
+waus[, "Day"] <- format(waus[,"Date"], "%d")
+waus$Day<-as.numeric(waus$Day)
+waus<-waus%>%
+  select(Year, everything())
+waus<-waus%>%
+  select(Month, everything())
+waus<-waus%>%
+  select(Day, everything())
+waus<-waus%>%
+  select(Location, everything())
+waus<-waus%>%
+  select(Date, everything())
+
+#Ordering the dates in ascending order for the Date column
+waus<-waus[order(waus$Date, decreasing = FALSE),]
+
+#Adding a new column - ID in the waus dataset
+waus$ID<-seq.int(nrow(waus))
+waus<-waus%>%
+  select(ID, everything())
+
+#wausmv dataset contains all the columns that have missing values in the waus dataset
+wausmv<-subset(waus,select=-c(Date,Location,WindGustDir,WindDir9am,WindDir3pm,RainToday,RainTomorrow,Month,Year,Day))
+
+#Data Imputation done using the pmm(predictive mean matching) method with the help of the mice package
+impdat<-mice(wausmv,m=5,maxit=5,seed=500)
+
+#nwaus dataset contains all the imputed values for all the columns in the wausmv dataset
+nwaus<-complete(impdat,3)
+
+#Adding a new column - ID in the nwaus dataset
+nwaus$ID<-seq.int(nrow(nwaus))
+nwaus<-nwaus%>%
+  select(ID, everything())
+
+#wausnmv dataset contains all the columns that do not have missing values in the waus dataset
+wausnmv<-subset(waus,select=c(ID,Date,Location,WindGustDir,WindDir9am,WindDir3pm,RainToday,RainTomorrow,Month,Year,Day))
+
+#fwaus dataset is obtained after merging the nwaus dataset and the wausnmv dataset by the common ID column
+fwaus<-merge(nwaus,wausnmv,by="ID")
+fwaus<-fwaus%>%
+  select(Year, everything())
+fwaus<-fwaus%>%
+  select(Month, everything())
+fwaus<-fwaus%>%
+  select(Day, everything())
+fwaus<-fwaus%>%
+  select(Location, everything())
+fwaus<-fwaus%>%
+  select(Date, everything())
+fwaus<-fwaus%>%
+  select(ID, everything())
+```
+
+### Basic commands to describe dataset: 
+
+### 1
+```{r}
+str(fwaus)
+```
+
+### 2
+```{r}
+dim(fwaus)
+```
+
+### 3
+```{r}
+class(fwaus)
+```
+
+### 4
+```{r}
+typeof(fwaus)
+```
+
+### 5
+```{r}
+names(fwaus)
+```
+
+### 6
+```{r}
+summary(fwaus)
+```
+
+### My objectives:
+
+### 1. To find out the which locations in Australia had maximum and minimum number of rainy and non rainy days across 10 years.
+```{r}
+rdaus <- fwaus %>%
+  filter(RainToday == "Yes") %>%
+  select(Location) %>%
+  table() %>%
+  as.data.frame()
+
+rdaus <- rdaus %>%
+  rename(Location = 1, Number_of_rainy_days = 2)
+
+#Location in Australia with maximum of rainy days across 10 years
+rdaus[which.max(rdaus$Number_of_rainy_days),]
+```
+### Inference: The location with the maximum number of rainy days was found to be Portland.
+
+```{r}
+#Location in Australia with minimum of rainy days across 10 years
+rdaus[which.min(rdaus$Number_of_rainy_days),]
+
+nrdaus <- fwaus %>%
+  filter(RainToday == "No") %>%
+  select(Location) %>%
+  table() %>%
+  as.data.frame()
+
+nrdaus <- nrdaus %>%
+  rename(Location = 1, Number_of_non_rainy_days = 2)
+```
+### Inference: The location with the minimum number of rainy days was found to be Uluru.
+
+```{r}
+#Location in Australia with maximum of non rainy days across 10 years
+nrdaus[which.max(nrdaus$Number_of_non_rainy_days),]
+nrdaus%>%
+  filter(Number_of_non_rainy_days==2789)
+```
+### Inference: The location with the maximum number of non rainy days was found to be Canberra and Woomera.
+
+```{r}
+#Location in Australia with minimum of non rainy days across 10 years
+nrdaus[which.min(nrdaus$Number_of_non_rainy_days),]
+```
+### Inference: The location with the minimum number of non rainy days was found to be Katherine.
+
+### 2. Observing the rain activity for different years and different months in a year
+```{r, fig.width=9, fig.height=5}
+lfwaus<-fwaus
+lfwaus$Year<-as.character(lfwaus$Year)
+
+ggplot(lfwaus %>% filter(RainToday=="Yes") %>% select(Year),aes(x=Year,fill=Year)) + geom_bar()+xlab("Years")+ylab("Number of Rainy Days")
+```
+### Inference:
+### When observing the number of rainy days, 2010 and 2016 seem to have greater than 4000 rainy days which is higher compared to other years.
+
+```{r, fig.width=9, fig.height=5}
+ggplot(lfwaus %>% filter(RainToday=="No") %>% select(Year),aes(x=Year,fill=Year)) + geom_bar()+xlab("Years")+ylab("Number of Non-Rainy Days")
+```
+### Inference:
+### When observing the number of non-rainy days, 2009, 2013, 2014, 2015 and 2016 months seem to have greater than 12500 non-rainy days which is higher compared to other years.
+### It can be clearly seen that the number of non-rainy days is far greater than the number of rainy days in Australia based on the y-axis values.
+
+```{r, fig.width=9, fig.height=5}
+ggplot(lfwaus %>% filter(RainToday=="Yes") %>% select(Month),aes(x=Month,fill=Month)) + geom_bar() +xlab("Months") +ylab("Number of Rainy Days")
+```
+### Inference: 
+### When observing the number of rainy days, June and July months seem to have greater than 3000 rainy days which is higher compared to other months in a year.
+
+```{r, fig.width=9, fig.height=5}
+ggplot(lfwaus %>% filter(RainToday=="No") %>% select(Month),aes(x=Month,fill=Month)) + geom_bar() +xlab("Months") +ylab("Number of Non-Rainy Days")
+```
+### Inference:
+### When observing the number of non-rainy days, January, March and May months seem to have greater than 10000 non-rainy days which is higher compared to other months in a year.
+
+### 3. Locations in Australia where Class A pan evaporation is greater than 70mm in the 24 hours to 9am from 2007 to 2017
+```{r}
+ggplot(fwaus %>% filter(Evaporation>70), aes(y="",fill=Location)) + geom_bar(position = 'stack', width = 3) +coord_polar() +theme_void() + ggtitle("Locations in Australia where Class A pan evaporation is greater than 70mm")+theme(plot.title = element_text(hjust = 0.5))
+```
+
+### Inference: 
+### Among the six locations, Woomera seems to have the highest occurences for Class A pan evaporation greater than 70mm in the 24 hours to 9am from 2007 to 2017. This shows that Woomera would be a location having hot, dry and windy climates.
+
+### 4. Observing high wind speed and high temperature at two different sections of years for different days in the week from 2007 to 2012 (fisrt section) and from 2013 to 2017 (second section)
+```{r}
+wfwaus<-fwaus%>%
+  mutate(Weekday=weekdays(Date))
+```
+
+### High Wind Speed
+```{r}
+ggplot(wfwaus %>% filter(WindSpeed9am>40 & Year<2013) %>% select(Weekday),aes(x=Weekday,fill=Weekday)) + geom_bar()+xlab("Days of the Week")+ylab("Number of occurences for Wind Speed greater than 14 km/hr")+ggtitle("High Wind Speed (km/hr) averaged over 10 minutes prior to 9am (2007-2012)")
+```
+### Inference:
+### High Wind Speed averaged over 10 minutes prior to 9am:
+### First Section (2007-2012):
+### Saturday seems to have the highest occurence and Monday seems to have the lowest occurence among the 7 days of the week.
+
+```{r}
+ggplot(wfwaus %>% filter(WindSpeed9am>40 & Year>2012) %>% select(Weekday),aes(x=Weekday,fill=Weekday)) + geom_bar()+xlab("Days of the Week")+ylab("Number of occurences for Wind Speed greater than 14 km/hr")+ggtitle("High Wind Speed (km/hr) averaged over 10 minutes prior to 9am (2013-2017)")
+```
+### Inference:
+### High Wind Speed averaged over 10 minutes prior to 9am:
+### Second Section (2013-2017):
+### Thursday seems to have the highest occurence and Saturday seems to have the lowest occurence among the 7 days of the week.
+
+```{r}
+ggplot(wfwaus %>% filter(WindSpeed3pm>40 & Year<2013) %>% select(Weekday),aes(x=Weekday,fill=Weekday)) + geom_bar()+xlab("Days of the Week")+ylab("Number of occurences for Wind Speed greater than 19 km/hr")+ggtitle("High Wind Speed (km/hr) averaged over 10 minutes prior to 3pm (2007-2012)")
+```
+### Inference:
+### High Wind Speed averaged over 10 minutes prior to 3pm:
+### First Section (2007-2012):
+### Tuesday seems to have the highest occurence and Monday seems to have the lowest occurence among the 7 days of the week.
+
+```{r}
+ggplot(wfwaus %>% filter(WindSpeed3pm>40 & Year>2012) %>% select(Weekday),aes(x=Weekday,fill=Weekday)) + geom_bar()+xlab("Days of the Week")+ylab("Number of occurences for Wind Speed greater than 19 km/hr")+ggtitle("High Wind Speed (km/hr) averaged over 10 minutes prior to 3pm (2013-2017)")
+```
+### Inference:
+### High Wind Speed averaged over 10 minutes prior to 3pm:
+### Second Section (2013-2017):
+### Tuesday seems to have the highest occurence and Wednesday seems to have the lowest occurence among the 7 days of the week.
+
+# High Temperature
+```{r}
+ggplot(wfwaus %>% filter(Temp9am>35 & Year<2013) %>% select(Weekday),aes(x=Weekday,fill=Weekday)) + geom_bar()+xlab("Days of the Week")+ylab("Number of occurences for Temperature greater than 35 degrees C")+ggtitle("High Temperature (degrees C) at 9am (2007-2012)")
+```
+### Inference:
+### High Temperature at 9am
+### First Section (2007-2012):
+### Friday seems to have the highest occurence and Sunday seems to have the lowest occurence among the 7 days of the week.
+
+```{r}
+ggplot(wfwaus %>% filter(Temp9am>35 & Year>2012) %>% select(Weekday),aes(x=Weekday,fill=Weekday)) + geom_bar()+xlab("Days of the Week")+ylab("Number of occurences for Temperature greater than 35 degrees C")+ggtitle("High Temperature (degrees C) at 9am (2013-2017)")
+```
+### Inference:
+### High Temperature at 9am
+### Second Section (2013-2017):
+### Friday seems to have the highest occurence and Monday seems to have the lowest occurence among the 7 days of the week.
+
+```{r}
+ggplot(wfwaus %>% filter(Temp3pm>35 & Year<2013) %>% select(Weekday),aes(x=Weekday,fill=Weekday)) + geom_bar()+xlab("Days of the Week")+ylab("Number of occurences for Temperature greater than 35 degrees C")+ggtitle("High Temperature (degrees C) at 3pm (2007-2012)")
+```
+### Inference:
+### High Temperature at 3pm:
+### First Section (2007-2012):
+### Saturday seems to have the highest occurence and Sunday seems to have the lowest occurence among the 7 days of the week.
+
+```{r}
+ggplot(wfwaus %>% filter(Temp3pm>35 & Year>2012) %>% select(Weekday),aes(x=Weekday,fill=Weekday)) + geom_bar()+xlab("Days of the Week")+ylab("Number of occurences for Temperature greater than 35 degrees C")+ggtitle("High Temperature (degrees C) at 3pm (2013-2017)")
+```
+### Inference:
+### High Temperature at 3pm:
+### Second Section (2013-2017):
+### Friday seems to have the highest occurence and Monday seems to have the lowest occurence among the 7 days of the week.
+
+### 5. To find out what environmental factors are responsible for causing the next day to rain in Australia.
+```{r}
+n0fwaus<-fwaus%>%
+  filter(RainTomorrow=="Yes")
+r0<-round(colMeans(n0fwaus[,7:22], na.rm = TRUE))
+n1fwaus<-fwaus%>%
+  filter(RainTomorrow=="No")
+r1<-round(colMeans(n1fwaus[,7:22], na.rm = TRUE))
+r0-r1
+```
+
+```{r}
+table(n0fwaus$WindGustDir)
+which.max(table(n0fwaus$WindGustDir))
+which.min(table(n0fwaus$WindGustDir))
+table(n0fwaus$WindDir9am)
+which.max(table(n0fwaus$WindDir9am))
+which.min(table(n0fwaus$WindDir9am))
+table(n0fwaus$WindDir3pm)
+which.max(table(n0fwaus$WindDir3pm))
+which.min(table(n0fwaus$WindDir3pm))
+```
+### Inference:
+### For the next day to rain in Australia:
+
+### When subtracting r1 (Dataset with means of columns 7-22 with RainTomorrow="No") from r0 (Dataset with means of columns 7-22 with RainTomorrow="Yes"), it shows that Rainfall, WindGustSpeed, Humidity9am, Humidity3pm show a positive significant difference and Pressure9am shows a negative significant difference.
+
+### The highest occurence for wind gust direction is West and lowest occurence for wind gust direction is East-Southeast.
+
+### The highest occurence for wind direction at 9am is North and lowest occurence for wind direction at 9am is East-Southeast.
+
+### The highest occurence for wind direction at 3pm is West and lowest occurence for wind direction at 3pm is East-Northeast.
+
+```{r}
+table(n1fwaus$WindGustDir)
+which.max(table(n1fwaus$WindGustDir))
+which.min(table(n1fwaus$WindGustDir))
+table(n1fwaus$WindDir9am)
+which.max(table(n1fwaus$WindDir9am))
+which.min(table(n1fwaus$WindDir9am))
+table(n1fwaus$WindDir3pm)
+which.max(table(n1fwaus$WindDir3pm))
+which.min(table(n0fwaus$WindDir3pm))
+
+```
+### Inference:
+### For the next day to not rain in Australia:
+
+### The highest occurence for wind gust direction is East and lowest occurence for wind gust direction is North-Northwest.
+
+### The highest occurence for wind direction at 9am is North and lowest occurence for wind direction at 9am is West-Southwest.
+
+### The highest occurence for wind direction at 3pm is South East and lowest occurence for wind direction at 3pm is East-Northeast.
+
+### 6. To predict the possibility of rain for the next day in any location based on the environmental factors in Australia.
+
+### Using three classification algorithms, I am trying to find out which classification algorithm is the best to predict the outcome variable which is "RainTommorow".
+
+### SVM
+### Linear Kernel
+```{r}
+f1waus<-fwaus[7:22]
+f1waus$ID<-seq.int(nrow(f1waus))
+f1waus<-f1waus%>%
+  select(ID, everything())
+f2waus<-fwaus[27]
+f2waus$ID<-seq.int(nrow(f2waus))
+f2waus<-f2waus%>%
+  select(ID, everything())
+f3waus<-merge(f1waus,f2waus,by="ID")
+dataset = f3waus[2:18]
+
+dataset$RainTomorrow = factor(dataset$RainTomorrow, levels = c('Yes','No'))
+
+split = sample.split(dataset$RainTomorrow, SplitRatio = 0.75)
+
+training_set = subset(dataset, split == TRUE)
+test_set = subset(dataset, split == FALSE)
+
+training_set[-17] = scale(training_set[-17])
+test_set[-17] = scale(test_set[-17])
+
+classifier = svm(formula = RainTomorrow ~ .,
+                 data = training_set,
+                 type = 'C-classification',
+                 kernel = 'linear')
+
+y_pred = predict(classifier, newdata = test_set[-17])
+
+confusionMatrix(table(y_pred,test_set$RainTomorrow))
+```
+
+### Polynomial Kernel
+```{r}
+classifier = svm(formula = RainTomorrow ~ .,
+                 data = training_set,
+                 type = 'C-classification',
+                 kernel = 'polynomial')
+
+y_pred = predict(classifier, newdata = test_set[-17])
+
+confusionMatrix(table(y_pred,test_set$RainTomorrow))
+
+```
+
+### Radial basis Kernel
+```{r}
+classifier = svm(formula = RainTomorrow ~ .,
+                 data = training_set,
+                 type = 'C-classification',
+                 kernel = 'radial')
+
+y_pred = predict(classifier, newdata = test_set[-17])
+
+confusionMatrix(table(y_pred,test_set$RainTomorrow))
+
+```
+
+### Sigmoid Kernel
+```{r}
+classifier = svm(formula = RainTomorrow ~ .,
+                 data = training_set,
+                 type = 'C-classification',
+                 kernel = 'sigmoid')
+
+y_pred = predict(classifier, newdata = test_set[-17])
+
+confusionMatrix(table(y_pred,test_set$RainTomorrow))
+
+```
+
+### KNN
+```{r}
+knnpredict <- knn(train=training_set[-17],test=test_set[-17],cl=training_set$RainTomorrow, k=9)
+confusionMatrix(table(knnpredict,test_set$RainTomorrow),positive='Yes')
+```
+
+### Logistic Regression
+```{r}
+logreg <- glm(formula = training_set$RainTomorrow ~.,family='binomial', data = training_set)
+logitrain <- predict(logreg, type='response')
+tapply(logitrain,training_set$RainTomorrow,mean)
+logitest <- predict(logreg, newdata = test_set, type='response')
+tapply(logitest,test_set$RainTomorrow,mean)
+test_set[logitest <=0.68, "LogiTest"]="Yes"
+test_set[logitest >0.68, "LogiTest"]="No"
+test_set$RainTomorrow <- as.character(test_set$RainTomorrow)  
+confusionMatrix(table(test_set[,17],test_set[,18]),positive='Yes')
+```
+### Inference:
+### The highest accuracy has been obtained by the SVM Classifier (using the Radial Basis kernel) among the three classification algorithms.
+
+### 7. To observe how the different environmental factors affect the amount of rainfall received in Australia.
+```{r}
+#Light Rain - the precipitation rate is less than 2.5 mm per hour
+#Moderate Rain - the precipitation rate is greater than or equal to 2.5 mm and less than 7.6 mm per hour
+#Heavy Rain - the precipitation rate is greater than or equal to 7.6 mm and less than 50 mm per hour
+
+#Here, Violent Rain category is neglected as there are no records for rain rate intensity greater than 50mm per hour
+
+#Creating a new dataset called n2fwaus which has Rainfall column as the amount of rainfall recorded per hour in mm
+n2fwaus<-fwaus
+n2fwaus$Rainfall<-(n2fwaus$Rainfall)/24
+
+#Splitting the different categories of the rain rate intensity into different datasets and analyzing them
+lr<-n2fwaus%>%
+  filter(Rainfall<2.5)
+mr<-n2fwaus%>%
+  filter(Rainfall>=2.5 & Rainfall<7.6)
+hr<-n2fwaus%>%
+  filter(Rainfall>=7.6 & Rainfall<50)
+```
+
+```{r}
+m0<-round(colMeans(lr[,7:22], na.rm = TRUE))
+table(lr$WindGustDir)
+which.max(table(lr$WindGustDir))
+which.min(table(lr$WindGustDir))
+table(lr$WindDir9am)
+which.max(table(lr$WindDir9am))
+which.min(table(lr$WindDir9am))
+table(lr$WindDir3pm)
+which.max(table(lr$WindDir3pm))
+which.min(table(lr$WindDir3pm))
+```
+### Inference:
+### Light Rain:
+
+### The highest occurence for wind gust direction is West and lowest occurence for wind gust direction is North-Northeast.
+
+### The highest occurence for wind direction at 9am is North and lowest occurence for wind direction at 9am is West-Southwest.
+
+### The highest occurence for wind direction at 3pm is South East and lowest occurence for wind direction at 3pm is North-Northeast.
+
+```{r}
+m1<-round(colMeans(mr[,7:22], na.rm = TRUE))
+table(mr$WindGustDir)
+which.max(table(mr$WindGustDir))
+which.min(table(mr$WindGustDir))
+table(mr$WindDir9am)
+which.max(table(mr$WindDir9am))
+which.min(table(mr$WindDir9am))
+table(mr$WindDir3pm)
+which.max(table(mr$WindDir3pm))
+which.min(table(mr$WindDir3pm))
+```
+### Inference:
+### Moderate Rain:
+
+### The highest occurence for wind gust direction is South and lowest occurence for wind gust direction is North-Northeast.
+
+### The highest occurence for wind direction at 9am is South East and lowest occurence for wind direction at 9am is North-Northeast.
+
+### The highest occurence for wind direction at 3pm is South-Southwest and lowest occurence for wind direction at 3pm is North-Northwest.
+
+```{r}
+m2<-round(colMeans(hr[,7:22], na.rm = TRUE))
+table(hr$WindGustDir)
+which.max(table(hr$WindGustDir))
+which.min(table(hr$WindGustDir))
+table(hr$WindDir9am)
+which.max(table(hr$WindDir9am))
+which.min(table(hr$WindDir9am))
+table(hr$WindDir3pm)
+which.max(table(hr$WindDir3pm))
+which.min(table(hr$WindDir3pm))
+
+```
+### Inference:
+### Heavy Rain:
+
+### The highest occurence for wind gust direction is South and lowest occurence for wind gust direction is East-Southeast.
+
+### The highest occurence for wind direction at 9am is South-Southeast and lowest occurence for wind direction at 9am is East.
+
+### The highest occurence for wind direction at 3pm is South and lowest occurence for wind direction at 3pm is East-Northeast.
+
+```{r}
+m0-m1
+m0-m2
+```
+### Inference:
+### Comparing Light Rain with Moderate Rain and Heavy Rain:
+
+### When subtracting m1 (Moderate Rain Dataset with means of columns 7-22) from m0 (Light Rain Dataset with means of columns 7-22), it shows that Sunshine, Pressure9am, Pressure3pm show a positive significant difference and MinTemp, Rainfall, WindGustSpeed, WindSpeed9am, Humidity9am, Humidity3pm show a negative significant difference.
+
+### When subtracting m2 (Heavy Rain Dataset with means of columns 7-22) from m0 (Light Rain Dataset with means of columns 7-22), it shows that Sunshine, Pressure9am, Pressure3pm show a positive significant difference and MinTemp, Rainfall, WindGustSpeed, WindSpeed9am, Humidity9am, Humidity3pm, Temp9am show a negative significant difference.
+
+```{r}
+m1-m0
+m1-m2
+```
+### Inference:
+### Comparing Moderate Rain with Light Rain and Heavy Rain:
+
+### When subtracting m0 (Light Rain Dataset with means of columns 7-22) from m1 (Moderate Rain Dataset with means of columns 7-22), it shows that MinTemp, Rainfall, WindGustSpeed, WindSpeed9am, Humidity9am, Humidity3pm show a positive significant difference and Sunshine, Pressure9am, Pressure3pm show a negative significant difference.
+
+### When subtracting m2 (Heavy Rain Dataset with means of columns 7-22) from m1 (Moderate Rain Dataset with means of columns 7-22), it shows no positive significant difference and Rainfall, WindGustSpeed, Humidity3pm show a negative significant difference.
+
+```{r}
+m2-m0
+m2-m1
+```
+### Inference:
+### Comparing Heavy Rain with Light Rain and Moderate Rain:
+
+### When subtracting m0 (Light Rain Dataset with means of columns 7-22) from m2 (Heavy Rain Dataset with means of columns 7-22), it shows that MinTemp, Rainfall, WindGustSpeed, WindSpeed9am, Humidity9am, Humidity3pm show a positive significant difference and Sunshine, Pressure9am, Pressure3pm show a negative significant difference.
+
+### When subtracting m1 (Moderate Rain Dataset with means of columns 7-22) from m2 (Heavy Rain Dataset with means of columns 7-22), it shows that Rainfall, WindGustSpeed, Humidity3pm shows positive significant difference and it shows no negative significant difference.
+
+### Conclusion:
+
+### I have predicted the possibility of rain and assessed how the different environmental factors affect the amount of rainfall received in Australia.
+
+### Acknowledgements:
+
+### I would like to thank Joe Young and Adamyoung for providing the dataset on Kaggle.
+
+* * *
